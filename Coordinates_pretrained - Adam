@@ -1,0 +1,379 @@
+# import the necessary packages
+#from pyimagesearch import config
+from tensorflow.keras.applications import VGG16
+from tensorflow.keras.layers import Flatten
+from tensorflow.keras.layers import Dropout
+from tensorflow.keras.layers import Dense
+from tensorflow.keras.layers import Input
+from tensorflow.keras.models import Model
+from tensorflow.keras.optimizers import Adam
+from tensorflow.keras.optimizers import SGD
+from tensorflow.keras.preprocessing.image import img_to_array
+from tensorflow.keras.preprocessing.image import load_img
+from tensorflow.keras.utils import to_categorical
+from sklearn.preprocessing import LabelBinarizer
+from sklearn.model_selection import train_test_split
+#from imutils import paths
+import matplotlib.pyplot as plt
+import numpy as np
+import pickle
+import cv2
+import os
+from tensorflow.keras.layers import GlobalAveragePooling2D
+
+
+import numpy as np
+from PIL import Image
+import glob
+import os
+import PIL
+import PIL.Image
+import tensorflow as tf
+from sklearn.model_selection import train_test_split
+import json
+import pandas as pd
+from matplotlib import pyplot as plt
+
+
+import random
+import Functions_Display as disp
+#import importlib
+import Functions_Import as imp
+import Functions_Augmentation as aug
+
+
+directory_path ='../Data/'
+#kili-label-export-cardiac-measurements-2022-11-30_16-34
+locationFile = directory_path + "label/kili-label-export-cardiac-measurements-2023-01-17_14-35.json"
+data = imp.load_labels_location(locationFile)
+labels = data.iloc[:,1:17]
+labels = np.asarray(labels).astype('float32')
+
+image_list = []
+image_list2 = []
+for filename in data.iloc[:, 0]:
+    im=Image.open(directory_path + 'Images jpg/' + filename)
+    image_list.append(im)
+
+crop_height = 600
+crop_width = 600
+img_height =224
+img_width = 224
+
+data_transform = pd.DataFrame(columns=data.columns)
+image_crop = []
+for i in range(len(image_list)):
+    # Cut image
+    inter_func = aug.get_center_pixels(image_list[i], crop_width, crop_height)
+    
+    int_pandas = pd.DataFrame(columns=data.columns)
+    # Find coordinates
+    for measurement in ['LV_LONG_X1', 'LV_LONG_X2', 'RV_LONG_X1', 'RV_LONG_X2', 'LV_SHORT_X1', 'LV_SHORT_X2', 'RV_SHORT_X1', 'RV_SHORT_X2']:
+        int_pandas.at[0, measurement] = (data[measurement][i] - inter_func[1][0])/(inter_func[1][1]-inter_func[1][0])
+    for measurement in ['LV_LONG_Y1', 'LV_LONG_Y2', 'RV_LONG_Y1', 'RV_LONG_Y2', 'LV_SHORT_Y1', 'LV_SHORT_Y2', 'RV_SHORT_Y1', 'RV_SHORT_Y2']:
+        int_pandas.at[0, measurement] = (data[measurement][i] - inter_func[1][2])/(inter_func[1][3]-inter_func[1][2])
+    
+    if (int_pandas.min(axis=1)>0)[0] and (int_pandas.max(axis=1)<1)[0]:
+        # Save new image
+        image_crop.append(np.array(inter_func[0].resize((img_height,img_width))))
+        #Save coordinates
+        data_transform = pd.concat([data_transform, int_pandas])
+        #data_transform.append(int_pandas)
+data_transform.reset_index(drop=True, inplace=True)
+
+data_transform=data_transform.drop("externalId",axis=1)
+
+
+X_train, X_test, Y_train, Y_test = train_test_split(image_crop, data_transform, test_size = 0.3, random_state=123)
+Y_train.reset_index(drop=True, inplace=True)
+len(X_train)
+
+X_train, Y_train = aug.data_augmentation(images=X_train, coordiantes=Y_train, generates=1000, alpha=[1,3], beta=[0, 100], zoom_x=0.5, zoom_y=0.5)
+
+Y_train = Y_train.to_numpy(dtype=None, copy=False)
+Y_train = np.asarray(Y_train).astype('float32')
+
+Y_test = Y_test.to_numpy(dtype=None, copy=False)
+Y_test = np.asarray(Y_test).astype('float32')
+
+X_train = np.stack(X_train, axis=-4)
+X_train = X_train.reshape(len(X_train), 224, 224, 3)
+X_train = np.asarray(X_train).astype('float32')
+
+X_test = np.stack(X_test, axis=-4)
+X_test = X_test.reshape(len(X_test), 224, 224, 3)
+X_test = np.asarray(X_test).astype('float32')
+
+
+from tensorflow.keras.callbacks import EarlyStopping
+
+NUM_EPOCHS = 75
+BATCH_SIZE = 128
+
+cb = EarlyStopping(
+    monitor="val_loss",
+    patience=20,
+    verbose=1,
+    restore_best_weights=True
+)
+
+
+from tensorflow.keras.applications import VGG16
+
+
+# create the base pre-trained model
+model_VGG16 = VGG16(weights="imagenet", include_top=False, input_tensor=Input(shape=(224, 224, 3)))
+
+# freeze all layers so they will *not* be updated during the
+model_VGG16.trainable = False
+flatten = model_VGG16.output
+flatten = Flatten()(flatten)
+output = Dense(16, activation="sigmoid",name="model_VGG16")(flatten)
+
+model_VGG16 = Model(inputs=model_VGG16.input,outputs=output)
+
+opt = Adam()
+model_VGG16.compile(loss="mean_squared_error", optimizer=opt, metrics=["accuracy"])
+#print(model_VGG16.summary())
+
+print("[INFO] training model...")
+history_VGG16 = model_VGG16.fit(X_train,Y_train,
+                    validation_data=(X_test,Y_test),
+                    batch_size=BATCH_SIZE,
+                    epochs=NUM_EPOCHS,
+                    verbose=1, 
+                    callbacks=[cb])
+
+model_VGG16.save('model_VGG16')
+
+
+from tensorflow.keras.applications import VGG19
+
+
+# create the base pre-trained model
+model_VGG19 = VGG19(weights="imagenet", include_top=False, input_tensor=Input(shape=(224, 224, 3)))
+
+# freeze all layers so they will *not* be updated during the
+model_VGG19.trainable = False
+flatten = model_VGG19.output
+flatten = Flatten()(flatten)
+output = Dense(16, activation="sigmoid",name="model_VGG19")(flatten)
+
+model_VGG19 = Model(inputs=model_VGG19.input,outputs=output)
+
+opt = Adam()
+model_VGG19.compile(loss="mean_squared_error", optimizer=opt, metrics=["accuracy"])
+#print(model_VGG19.summary())
+
+print("[INFO] training model...")
+history_VGG19 = model_VGG19.fit(X_train,Y_train,
+                    validation_data=(X_test,Y_test),
+                    batch_size=BATCH_SIZE,
+                    epochs=NUM_EPOCHS,
+                    verbose=1, 
+                    callbacks=[cb])
+
+model_VGG19.save('model_VGG19')
+
+
+from tensorflow.keras.applications import Xception
+
+
+# create the base pre-trained model
+model_Xception = Xception(weights="imagenet", include_top=False, input_tensor=Input(shape=(224, 224, 3)))
+
+# freeze all layers so they will *not* be updated during the
+model_Xception.trainable = False
+flatten = model_Xception.output
+flatten = Flatten()(flatten)
+output = Dense(16, activation="sigmoid",name="model_Xception")(flatten)
+
+model_Xception = Model(inputs=model_Xception.input,outputs=output)
+
+opt = Adam()
+model_Xception.compile(loss="mean_squared_error", optimizer=opt, metrics=["accuracy"])
+#print(model_Xception.summary())
+
+print("[INFO] training model...")
+history_Xception = model_Xception.fit(X_train,Y_train,
+                    validation_data=(X_test,Y_test),
+                    batch_size=BATCH_SIZE,
+                    epochs=NUM_EPOCHS,
+                    verbose=1, 
+                    callbacks=[cb])
+
+model_Xception.save('model_Xception')
+
+
+
+from tensorflow.keras.applications import ResNet50V2
+
+# create the base pre-trained model
+model_ResNet50V2 = ResNet50V2(weights="imagenet", include_top=False, input_tensor=Input(shape=(224, 224, 3)))
+
+# freeze all layers so they will *not* be updated during the
+model_ResNet50V2.trainable = False
+flatten = model_ResNet50V2.output
+flatten = Flatten()(flatten)
+output = Dense(16, activation="sigmoid",name="model_ResNet50V2")(flatten)
+
+model_ResNet50V2 = Model(inputs=model_ResNet50V2.input,outputs=output)
+
+opt = Adam()
+model_ResNet50V2.compile(loss="mean_squared_error", optimizer=opt, metrics=["accuracy"])
+#print(model_ResNet50V2.summary())
+
+print("[INFO] training model...")
+history_ResNet50V2 = model_ResNet50V2.fit(X_train,Y_train,
+                    validation_data=(X_test,Y_test),
+                    batch_size=BATCH_SIZE,
+                    epochs=NUM_EPOCHS,
+                    verbose=1, 
+                    callbacks=[cb])
+
+model_ResNet50V2.save('model_ResNet50V2')
+
+
+from tensorflow.keras.applications import ResNet101V2
+
+# create the base pre-trained model
+model_ResNet101V2 = ResNet101V2(weights="imagenet", include_top=False, input_tensor=Input(shape=(224, 224, 3)))
+
+# freeze all layers so they will *not* be updated during the
+model_ResNet101V2.trainable = False
+flatten = model_ResNet101V2.output
+flatten = Flatten()(flatten)
+output = Dense(16, activation="sigmoid",name="model_ResNet101V2")(flatten)
+
+model_ResNet101V2 = Model(inputs=model_ResNet101V2.input,outputs=output)
+
+opt = Adam()
+model_ResNet101V2.compile(loss="mean_squared_error", optimizer=opt, metrics=["accuracy"])
+#print(model_ResNet101V2.summary())
+
+print("[INFO] training model...")
+history_ResNet101V2 = model_ResNet101V2.fit(X_train,Y_train,
+                    validation_data=(X_test,Y_test),
+                    batch_size=BATCH_SIZE,
+                    epochs=NUM_EPOCHS,
+                    verbose=1, 
+                    callbacks=[cb])
+
+model_ResNet101V2.save('model_ResNet101V2')
+
+
+
+from tensorflow.keras.applications import InceptionV3
+
+# create the base pre-trained model
+model_InceptionV3 = InceptionV3(weights="imagenet", include_top=False, input_tensor=Input(shape=(224, 224, 3)))
+
+# freeze all layers so they will *not* be updated during the
+model_InceptionV3.trainable = False
+flatten = model_InceptionV3.output
+flatten = Flatten()(flatten)
+output = Dense(16, activation="sigmoid",name="model_InceptionV3")(flatten)
+
+model_InceptionV3 = Model(inputs=model_InceptionV3.input,outputs=output)
+
+opt = Adam()
+model_InceptionV3.compile(loss="mean_squared_error", optimizer=opt, metrics=["accuracy"])
+#print(model_InceptionV3.summary())
+
+print("[INFO] training model...")
+history_InceptionV3 = model_InceptionV3.fit(X_train,Y_train,
+                    validation_data=(X_test,Y_test),
+                    batch_size=BATCH_SIZE,
+                    epochs=NUM_EPOCHS,
+                    verbose=1, 
+                    callbacks=[cb])
+
+model_InceptionV3.save('model_InceptionV3')
+
+
+from tensorflow.keras.applications import InceptionResNetV2
+
+# create the base pre-trained model
+model_InceptionResNetV2 = InceptionResNetV2(weights="imagenet", include_top=False, input_tensor=Input(shape=(224, 224, 3)))
+
+# freeze all layers so they will *not* be updated during the
+model_InceptionResNetV2.trainable = False
+flatten = model_InceptionResNetV2.output
+flatten = Flatten()(flatten)
+output = Dense(16, activation="sigmoid",name="model_InceptionResNetV2")(flatten)
+
+model_InceptionResNetV2 = Model(inputs=model_InceptionResNetV2.input,outputs=output)
+
+opt = Adam()
+model_InceptionResNetV2.compile(loss="mean_squared_error", optimizer=opt, metrics=["accuracy"])
+#print(model_InceptionResNetV2.summary())
+
+print("[INFO] training model...")
+history_InceptionResNetV2 = model_InceptionResNetV2.fit(X_train,Y_train,
+                    validation_data=(X_test,Y_test),
+                    batch_size=BATCH_SIZE,
+                    epochs=NUM_EPOCHS,
+                    verbose=1, 
+                    callbacks=[cb])
+
+model_InceptionResNetV2.save('model_InceptionResNetV2')
+
+
+from tensorflow.keras.applications import DenseNet121
+
+# create the base pre-trained model
+model_DenseNet121 = DenseNet121(weights="imagenet", include_top=False, input_tensor=Input(shape=(224, 224, 3)))
+
+# freeze all layers so they will *not* be updated during the
+model_DenseNet121.trainable = False
+flatten = model_DenseNet121.output
+flatten = Flatten()(flatten)
+output = Dense(16, activation="sigmoid",name="model_DenseNet121")(flatten)
+
+model_DenseNet121 = Model(inputs=model_DenseNet121.input,outputs=output)
+
+opt = Adam()
+model_DenseNet121.compile(loss="mean_squared_error", optimizer=opt, metrics=["accuracy"])
+#print(model_DenseNet121.summary())
+
+print("[INFO] training model...")
+history_DenseNet121 = model_DenseNet121.fit(X_train,Y_train,
+                    validation_data=(X_test,Y_test),
+                    batch_size=BATCH_SIZE,
+                    epochs=NUM_EPOCHS,
+                    verbose=1, 
+                    callbacks=[cb])
+
+model_DenseNet121.save('model_DenseNet121')
+
+
+forecast_VGG16 = pd.DataFrame(model_VGG16.predict(X_test), columns = data_transform.columns)
+forecast_VGG19 = pd.DataFrame(model_VGG19.predict(X_test), columns = data_transform.columns)
+forecast_Xception = pd.DataFrame(model_Xception.predict(X_test), columns = data_transform.columns)
+forecast_ResNet50V2 = pd.DataFrame(model_ResNet50V2.predict(X_test), columns = data_transform.columns)
+forecast_ResNet101V2 = pd.DataFrame(model_ResNet101V2.predict(X_test), columns = data_transform.columns)
+forecast_InceptionV3 = pd.DataFrame(model_InceptionV3.predict(X_test), columns = data_transform.columns)
+forecast_InceptionResNetV2 = pd.DataFrame(model_InceptionResNetV2.predict(X_test), columns = data_transform.columns)
+forecast_DenseNet121 = pd.DataFrame(model_DenseNet121.predict(X_test), columns = data_transform.columns)
+
+
+
+results_VGG16 = model_VGG16.evaluate(X_test, Y_test)
+results_VGG19 = model_VGG19.evaluate(X_test, Y_test)
+results_Xception = model_Xception.evaluate(X_test, Y_test)
+results_ResNet50V2 = model_ResNet50V2.evaluate(X_test, Y_test)
+results_ResNet101V2 = model_ResNet101V2.evaluate(X_test, Y_test)
+results_InceptionV3 = model_InceptionV3.evaluate(X_test, Y_test)
+results_InceptionResNetV2 = model_InceptionResNetV2.evaluate(X_test, Y_test)
+results_DenseNet121 = model_DenseNet121.evaluate(X_test, Y_test)
+
+
+
+print("Results for VGG19 : test loss, test acc:", results_VGG16)
+print("Results for VGG19 : test loss, test acc:", results_VGG19)
+print("Results for Xception : test loss, test acc:", results_Xception)
+print("Results for ResNet50V2 : test loss, test acc:", results_ResNet50V2)
+print("Results for ResNet101V2 : test loss, test acc:", results_ResNet101V2)
+print("Results for InceptionV3 : test loss, test acc:", results_InceptionV3)
+print("Results for InceptionResNetV2 : test loss, test acc:", results_InceptionResNetV2)
+print("Results for DenseNet12 : test loss, test acc:", results_DenseNet121)
